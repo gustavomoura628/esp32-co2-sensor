@@ -2,7 +2,12 @@
 
 ## TODO
 
-- [ ] Read battery voltage via ADC (voltage divider on a free GPIO)
+- [ ] Read battery voltage via ADC (voltage divider on GPIO4)
+  - Wire: Battery+ ── 100kΩ ── GPIO4 ── 100kΩ ── GND
+  - Halves voltage: 4.2V→2.1V, 3.0V→1.5V (within ADC range)
+  - Display on OLED and web UI
+  - Send ntfy push notification when below 3.4V
+  - Use for discharging the old dead cell (monitor voltage down to 3.0V)
 - [ ] Wire up and integrate the MH-Z19B/C CO2 sensor
 - [ ] Wire up HTU21D temperature/humidity sensor (shares I2C bus with OLED)
 - [ ] Home Assistant integration (ESPHome + MQTT)

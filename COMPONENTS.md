@@ -11,6 +11,8 @@
 | 5 | 18650 Li-ion cell (3.7V, 2600mAh) | Battery power |
 | 6 | 18650 Battery Shield V3 | Charging + 5V/3.3V boost |
 | 7 | HTU21D / SI7021 / GY-21 | Temperature + humidity |
+| 8 | Relay module | Room light control |
+| 9 | WS2813 LED strip (1m, 30 LEDs, DC5V) | Ambient lighting |
 
 ---
 
@@ -35,7 +37,7 @@
 ```
         [USB-C]
    ┌───────────────┐
-   │ GPIO3   GPIO0 │  <-- GPIO0: sacrificed (missing header pin)
+   │ GPIO3   GPIO0 │
    │ GPIO4   GPIO1 │
    │ GPIO5   GPIO2 │  GPIO5 = OLED SDA (internal)
    │ GPIO6   TX    │  GPIO6 = OLED SCL (internal)
@@ -46,7 +48,7 @@
    └───────────────┘
 ```
 
-**Freely usable GPIOs:** GPIO1, GPIO3, GPIO4, GPIO7, GPIO10
+**Freely usable GPIOs:** GPIO0, GPIO1, GPIO3 (all ADC-capable)
 
 **Usable with caution (strapping pins):**
 - GPIO2 -- must be HIGH at boot
@@ -56,6 +58,23 @@
 **Internally committed:**
 - GPIO5 (SDA) and GPIO6 (SCL) -- wired to the OLED. Can share the I2C bus with other devices at different addresses.
 - GPIO20 (RX) and GPIO21 (TX) -- UART0. Free for general use when USB CDC is enabled (USB serial uses separate internal GPIO18/19). Note: some reports of GPIO20 (RX) not receiving data on battery power — investigate if UART RX issues appear without USB connected.
+
+**Planned GPIO allocation:**
+
+| GPIO | Function |
+|------|----------|
+| 0 | *Spare (ADC-capable)* |
+| 1 | *Spare (ADC-capable)* |
+| 3 | *Spare (ADC-capable)* |
+| 4 | Battery voltage ADC |
+| 5 | I2C SDA (OLED + HTU21D) |
+| 6 | I2C SCL (OLED + HTU21D) |
+| 7 | Relay (room light) |
+| 8 | Onboard blue LED |
+| 9 | BOOT button |
+| 10 | WS2813 LED strip data |
+| 20 | UART RX (MH-Z19C) |
+| 21 | UART TX (MH-Z19C) |
 
 ### Built-in 0.42" OLED
 
@@ -144,7 +163,31 @@ Example accuracy at 1000 ppm (MH-Z19B): +/- (50 + 30) = +/- 80 ppm, so reading c
 | 6 | White | NC |
 | 7 | Brown | Analog output |
 
-**MH-Z19C:** Pins 2-5 are the same. Pins 1, 6, 7 differ (PWM, Analog, HD respectively). **Check your specific module before wiring.**
+**MH-Z19C (our unit):**
+
+Unit info: MH-Z19C, 400-5000PPM, date 20251025, batch HX40024.
+
+Physical layout — two pin headers, left (5 pins) and right (4 pins):
+
+```
+Left (5 pins):   HD | blank | Tx | Rx | blank
+Right (4 pins):  PWM | blank | GND | Vin
+```
+
+Wiring to ESP32-C3 SuperMini:
+
+| Sensor Pin | Connect to |
+|------------|------------|
+| Tx (left, pin 3) | GPIO20 (ESP32 RX) |
+| Rx (left, pin 4) | GPIO21 (ESP32 TX) |
+| Vin (right, pin 4) | 5V rail |
+| GND (right, pin 3) | GND |
+
+TX/RX are cross-connected (sensor TX -> ESP RX, sensor RX -> ESP TX). Logic
+levels are 3.3V, no level shifter needed. Place a 100-470uF electrolytic cap
+between Vin and GND right at the sensor to absorb 125mA current peaks.
+
+Do not touch the HD pin (calibration trigger).
 
 ### UART Protocol
 
@@ -348,6 +391,22 @@ To identify the pads: use a multimeter in continuity mode — GND has continuity
 with the battery negative terminal and the large shield tabs. VBUS is the
 remaining signal pad that traces back to the charger IC (U1).
 
+### Battery Voltage Monitoring
+
+Read cell voltage via ADC through a voltage divider on GPIO4:
+
+```
+Battery + ── 100kΩ ──┬── 100kΩ ── GND
+                     │
+                   GPIO4
+```
+
+Two equal 100kΩ resistors halve the voltage, mapping the 3.0-4.2V cell range
+to 1.5-2.1V (within the ESP32-C3 ADC range). The high resistance means
+negligible drain (~21uA).
+
+Firmware will send a push notification via ntfy when the cell drops below 3.4V.
+
 ### Critical Pitfalls
 
 1. **Reverse battery polarity destroys the board.** No protection. Double-check +/- markings.
@@ -440,3 +499,46 @@ sensing element from contamination while allowing moisture through.
 Note: The MH-Z19 has a built-in temperature reading, but it's inaccurate and
 only meant for internal compensation. Use this dedicated sensor for actual
 temperature/humidity display.
+
+---
+
+## 8. Relay Module
+
+Mechanical relay module on GPIO7 for room light control. The relay coil is 5V,
+driven via an NPN transistor or MOSFET since the ESP32-C3 outputs 3.3V logic.
+A GPIO HIGH switches the transistor, which pulls the relay coil to 5V.
+
+Typical circuit:
+
+```
+GPIO7 ── 1kΩ ── NPN base (or MOSFET gate)
+                NPN collector ── relay coil ── 5V
+                NPN emitter ── GND
+                Flyback diode across coil (cathode to 5V)
+```
+
+Most pre-built relay modules already include the transistor driver and flyback
+diode on-board. Check whether yours is active-HIGH or active-LOW.
+
+---
+
+## 9. WS2813 LED Strip
+
+| Parameter | Value |
+|-----------|-------|
+| Type | WS2813 (dual data line) |
+| Voltage | DC 5V |
+| LEDs | 30 per meter, 1m length |
+| Rating | IP30 (no waterproofing) |
+| Data pin | GPIO10 |
+
+WS2813 is similar to WS2812B but has a backup data line — if one LED dies, the
+signal bypasses it and the rest of the strip keeps working.
+
+The ESP32-C3 outputs 3.3V logic but WS2813 expects 5V. At 30 LEDs on short
+wires this usually works fine. If you get flickering, add a logic level shifter
+or wire the data line through the DIN of a sacrificial first pixel powered at
+5V.
+
+Peak current at full white: 30 LEDs x ~50mA = 1.5A. Power the strip directly
+from a 5V supply, not through the ESP32.
