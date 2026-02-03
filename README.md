@@ -11,6 +11,8 @@
 - [ ] Wire up and integrate the MH-Z19B/C CO2 sensor
 - [ ] Wire up HTU21D temperature/humidity sensor (shares I2C bus with OLED)
 - [ ] Home Assistant integration (ESPHome + MQTT)
+- [ ] Relay for room light control (GPIO7)
+- [ ] WS2813 LED strip (GPIO10, 1m 30 LEDs)
 
 Indoor CO2 monitor built on an ESP32-C3 SuperMini with a built-in 0.42" OLED display. Serves a dark-themed web UI for controlling the onboard LED and sending messages to the OLED. CO2 sensing (MH-Z19B/C) is planned but not yet wired up.
 
