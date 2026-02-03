@@ -431,6 +431,8 @@ void setup() {
 
     // CO2 sensor (UART on GPIO20 RX, GPIO21 TX)
     Serial1.begin(9600, SERIAL_8N1, 20, 21);
+    delay(100);
+    while (Serial1.available()) Serial1.read();
     mhz.begin(Serial1);
     mhz.autoCalibration(false);
     bootTime = millis();
