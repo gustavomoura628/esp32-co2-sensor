@@ -1,4 +1,4 @@
-# ESP32 CO2 Sensor
+# ESP32 Room Controller
 
 ## TODO
 
@@ -6,10 +6,10 @@
 - [x] Wire up and integrate the MH-Z19C CO2 sensor
 - [x] Wire up HTU21D temperature/humidity sensor (shares I2C bus with OLED)
 - [ ] Home Assistant integration (ESPHome + MQTT)
-- [ ] Relay for room light control (GPIO7)
+- [x] Relay for room light control (GPIO7)
 - [x] WS2813 LED strip (GPIO10, 1m 30 LEDs)
 
-Indoor CO2 monitor built on an ESP32-C3 SuperMini with a built-in 0.42" OLED display. Monitors CO2, temperature, and humidity via MH-Z19C and HTU21D sensors. Serves a dark-themed web UI with live sensor readings and LED control.
+Indoor room controller built on an ESP32-C3 SuperMini with a built-in 0.42" OLED display. Monitors CO2, temperature, and humidity via MH-Z19C and HTU21D sensors. Controls a room light via relay and a WS2813 LED strip. Serves a dark-themed web UI with live sensor readings and controls.
 
 ## Hardware
 
@@ -19,7 +19,7 @@ Indoor CO2 monitor built on an ESP32-C3 SuperMini with a built-in 0.42" OLED dis
 | MH-Z19C NDIR sensor | CO2 measurement |
 | HTU21D | Temperature + humidity |
 | 18650 cell + Battery Shield V3 | Portable power + voltage monitoring |
-| Relay module | Room light control (planned) |
+| Relay module + TIP122 | Room light control |
 | WS2813 LED strip (1m, 30 LEDs) | Ambient lighting |
 
 See [COMPONENTS.md](COMPONENTS.md) for full specs, pinouts, and known issues.
@@ -37,7 +37,7 @@ draw is ~2A (LED strip at full white + everything else).
 
 ## Features
 
-- **Web UI** -- dark theme, live CO2/temp/humidity readings, battery voltage, LED strip controls
+- **Web UI** -- dark theme, live CO2/temp/humidity readings, battery voltage, LED strip controls, room light relay
 - **LED strip** -- WS2813, 30 LEDs, solid color + rainbow mode, brightness slider, color picker
 - **OLED display** -- shows IP address (scrolling if too long), CO2 ppm, battery voltage, temp/humidity
 - **CO2 monitoring** -- MH-Z19C NDIR sensor, 5s polling, 3-minute warmup (skipped on soft reset via RTC memory)
@@ -72,6 +72,8 @@ pio device monitor
 | `/co2temp` | GET | Returns CO2 sensor internal temp (unreliable, -1 during warmup) |
 | `/temp` | GET | Returns HTU21D temperature in °C |
 | `/humidity` | GET | Returns HTU21D humidity in %RH |
+| `/relay` | GET | Toggles relay, returns `ON` or `OFF` |
+| `/relaystatus` | GET | Returns current relay state as plain text |
 | `/strip` | GET | LED strip control: `on`, `brightness`, `mode`, `r`, `g`, `b` params |
 
 ## WiFi antenna defect

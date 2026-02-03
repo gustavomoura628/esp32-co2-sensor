@@ -18,6 +18,7 @@
 #define BATTERY_LOW_THRESHOLD 3.4
 #define NTFY_INTERVAL 300000  // 5 minutes
 #define SKIP_WARMUP true      // debug: skip CO2 warmup
+#define RELAY_PIN 7
 #define LED_STRIP_PIN 10
 #define NUM_LEDS 30
 
@@ -30,6 +31,7 @@ CRGB leds[NUM_LEDS];
 RTC_DATA_ATTR bool sensorWasRunning = false;
 
 bool ledOn = false;
+bool relayOn = false;
 int ipScrollOffset = 0;
 unsigned long lastScrollTime = 0;
 float batteryVoltage = 0.0;
@@ -89,7 +91,7 @@ const char *PAGE = R"rawliteral(
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ESP32-C3 Test</title>
+<title>ESP32 Room Controller</title>
 <style>
   body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px;
          background: #1a1a1a; color: #e0e0e0; }
@@ -102,6 +104,8 @@ const char *PAGE = R"rawliteral(
              transition: background 0.2s; }
   .led-on { background: #3b82f6; border: 2px solid #3b82f6; }
   .led-off { background: #1a1a1a; border: 2px solid #3a3a3a; }
+  .relay-on { background: #e0e0e0; border: 2px solid #e0e0e0; }
+  .relay-off { background: #1a1a1a; border: 2px solid #3a3a3a; }
   #ledlabel { font-size: 0.9em; color: #aaa; }
   button { padding: 8px 16px; font-size: 0.9em; margin-top: 8px; cursor: pointer;
            background: #3b82f6; color: #fff; border: none; border-radius: 6px; }
@@ -111,7 +115,7 @@ const char *PAGE = R"rawliteral(
 </style>
 </head>
 <body>
-<h1>ESP32-C3 CO2 Sensor</h1>
+<h1>ESP32 Room Controller</h1>
 
 <div class="grid">
 
@@ -136,9 +140,17 @@ const char *PAGE = R"rawliteral(
 </div>
 
 <div class="card">
+  <div style="font-size:0.85em;color:#aaa;margin-bottom:6px">Board LED</div>
   <div id="ledbox" class="led-box led-off"></div>
-  <div id="ledlabel">Board LED OFF</div>
-  <button onclick="toggleLed()">Toggle LED</button>
+  <div id="ledlabel">OFF</div>
+  <button onclick="toggleLed()">Toggle</button>
+</div>
+
+<div class="card">
+  <div style="font-size:0.85em;color:#aaa;margin-bottom:6px">Room Light</div>
+  <div id="relaybox" class="led-box relay-off"></div>
+  <div id="relaylabel">OFF</div>
+  <button onclick="toggleRelay()">Toggle</button>
 </div>
 
 <div class="card wide">
@@ -162,15 +174,15 @@ function setLed(state) {
   var label = document.getElementById('ledlabel');
   if (state === 'ON') {
     box.className = 'led-box led-on';
-    label.innerText = 'Board LED ON';
+    label.innerText = 'ON';
   } else {
     box.className = 'led-box led-off';
-    label.innerText = 'Board LED OFF';
+    label.innerText = 'OFF';
   }
 }
 function toggleLed() {
   var label = document.getElementById('ledlabel');
-  setLed(label.innerText.indexOf('ON') >= 0 ? 'OFF' : 'ON');
+  setLed(label.innerText === 'ON' ? 'OFF' : 'ON');
   fetch('/led').then(function(r){return r.text()}).then(setLed);
 }
 fetch('/status').then(function(r){return r.text()}).then(setLed);
@@ -228,6 +240,21 @@ function updateHTU() {
 }
 updateHTU();
 setInterval(updateHTU, 5000);
+function setRelay(state) {
+  var box = document.getElementById('relaybox');
+  document.getElementById('relaylabel').innerText = state;
+  if (state === 'ON') {
+    box.className = 'led-box relay-on';
+  } else {
+    box.className = 'led-box relay-off';
+  }
+}
+function toggleRelay() {
+  var label = document.getElementById('relaylabel');
+  setRelay(label.innerText === 'ON' ? 'OFF' : 'ON');
+  fetch('/relay').then(function(r){return r.text()}).then(setRelay);
+}
+fetch('/relaystatus').then(function(r){return r.text()}).then(setRelay);
 var stripIsOn = false;
 function toggleStrip() {
   stripIsOn = !stripIsOn;
@@ -268,6 +295,16 @@ void handleLed() {
     server.send(200, "text/plain", ledOn ? "ON" : "OFF");
 }
 
+void handleRelay() {
+    relayOn = !relayOn;
+    digitalWrite(RELAY_PIN, relayOn ? HIGH : LOW);
+    server.send(200, "text/plain", relayOn ? "ON" : "OFF");
+}
+
+void handleRelayStatus() {
+    server.send(200, "text/plain", relayOn ? "ON" : "OFF");
+}
+
 void handleBattery() {
     char buf[8];
     snprintf(buf, sizeof(buf), "%.2f", batteryVoltage);
@@ -283,7 +320,7 @@ void readBattery() {
 void sendNtfyAlert() {
     HTTPClient http;
     http.begin(NTFY_BATTERY);
-    http.addHeader("Title", "ESP32 CO2 Sensor - Battery Low");
+    http.addHeader("Title", "ESP32 Room Controller - Battery Low");
     http.addHeader("Tags", "warning,battery");
     http.addHeader("Priority", "high");
     char msg[32];
@@ -382,6 +419,10 @@ void setup() {
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, HIGH); // OFF (inverted)
 
+    // Relay
+    pinMode(RELAY_PIN, OUTPUT);
+    digitalWrite(RELAY_PIN, LOW); // OFF (active-high, inverted by transistor)
+
     // LED strip
     FastLED.addLeds<WS2813, LED_STRIP_PIN, GRB>(leds, NUM_LEDS);
     FastLED.setCorrection(TypicalLEDStrip);
@@ -467,6 +508,8 @@ void setup() {
     server.on("/temp", handleTemp);
     server.on("/humidity", handleHumidity);
     server.on("/strip", handleStrip);
+    server.on("/relay", handleRelay);
+    server.on("/relaystatus", handleRelayStatus);
     server.begin();
 
     Serial.println("Web server started.");
@@ -475,7 +518,7 @@ void setup() {
     {
         HTTPClient http;
         http.begin(NTFY_BOOT);
-        http.addHeader("Title", "ESP32 CO2 Sensor booted");
+        http.addHeader("Title", "ESP32 Room Controller booted");
         http.addHeader("Tags", "electric_plug");
         char msg[128];
         snprintf(msg, sizeof(msg), "IP: %s\nRSSI: %d dBm\nMAC: %s\nSSID: %s",

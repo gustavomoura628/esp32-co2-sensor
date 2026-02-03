@@ -1,4 +1,4 @@
-# ESP32 CO2 Sensor -- Component Reference
+# ESP32 Room Controller -- Component Reference
 
 ## Bill of Materials
 
@@ -13,6 +13,9 @@
 | 7 | HTU21D / SI7021 / GY-21 | Temperature + humidity |
 | 8 | Relay module | Room light control |
 | 9 | WS2813 LED strip (1m, 30 LEDs, DC5V) | Ambient lighting |
+| 10 | TIP122 Darlington transistor | Relay level shifter (3.3V → 5V) |
+| 11 | 700Ω resistor | TIP122 base resistor |
+| 12 | 4.7kΩ resistor | Relay IN pull-up to 5V |
 
 ---
 
@@ -504,15 +507,32 @@ temperature/humidity display.
 
 ## 8. Relay Module
 
-3-pin relay module (driver circuit built in) on GPIO7 for room light control.
+3-pin relay module (driver circuit built in) on GPIO7 for room light control
+(220V room light bulb).
 
-### Wiring
+The relay module requires 5V on its IN pin to activate, but the ESP32-C3 GPIO
+outputs 3.3V. A TIP122 Darlington NPN transistor acts as a level shifter. A
+4.7kΩ pull-up holds IN at 5V when the transistor is off; when GPIO7 goes HIGH,
+the TIP122 pulls IN to GND, switching the relay. This inverts the logic — the
+firmware accounts for it.
+
+### Module wiring
 
 | Wire colour | Pin | Connect to |
 |-------------|-----|------------|
 | Orange | VCC | 5V rail |
 | Brown | GND | Shared GND |
-| Yellow | IN | GPIO7 |
+| Yellow | IN | TIP122 collector + 4.7kΩ pull-up to 5V |
+
+### TIP122 wiring
+
+Hold the TIP122 with the label facing you (metal tab away):
+
+```
+Left = Base    → 700Ω resistor → GPIO7
+Middle = Collector → Relay IN (yellow wire) + 4.7kΩ to 5V
+Right = Emitter    → GND
+```
 
 ---
 
