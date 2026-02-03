@@ -10,6 +10,7 @@
 | 4 | MH-Z19B/C NDIR CO2 sensor | CO2 measurement |
 | 5 | 18650 Li-ion cell (3.7V, 2600mAh) | Battery power |
 | 6 | 18650 Battery Shield V3 | Charging + 5V/3.3V boost |
+| 7 | HTU21D / SI7021 / GY-21 | Temperature + humidity |
 
 ---
 
@@ -54,7 +55,7 @@
 
 **Internally committed:**
 - GPIO5 (SDA) and GPIO6 (SCL) -- wired to the OLED. Can share the I2C bus with other devices at different addresses.
-- GPIO20 (RX) and GPIO21 (TX) -- UART0
+- GPIO20 (RX) and GPIO21 (TX) -- UART0. Free for general use when USB CDC is enabled (USB serial uses separate internal GPIO18/19). Note: some reports of GPIO20 (RX) not receiving data on battery power — investigate if UART RX issues appear without USB connected.
 
 ### Built-in 0.42" OLED
 
@@ -413,3 +414,29 @@ The kit includes values from 1uF to 470uF at various voltage ratings (16V, 25V, 
 - **10-47uF** on the 3.3V rail near the ESP32 if powered from the battery shield
 
 Place capacitors as close to the sensor's VIN/GND pins as physically possible.
+
+---
+
+## 7. HTU21D / SI7021 / GY-21 Temperature & Humidity Sensor
+
+These are all the same silicon (SI7021) on different breakout boards. Any of
+them works identically.
+
+| Parameter | Value |
+|-----------|-------|
+| Interface | I2C |
+| I2C address | 0x40 |
+| Supply voltage | 3.3V |
+| Temperature accuracy | +/- 0.3 C |
+| Humidity accuracy | +/- 3% RH |
+| Current draw | ~150 uA active, <1 uA standby |
+
+Shares the I2C bus with the OLED (GPIO5 SDA, GPIO6 SCL on the ESP32-C3
+SuperMini). No additional wiring needed beyond VIN, GND, and the shared bus.
+
+**The paper/membrane on top is a dust filter — leave it on.** It protects the
+sensing element from contamination while allowing moisture through.
+
+Note: The MH-Z19 has a built-in temperature reading, but it's inaccurate and
+only meant for internal compensation. Use this dedicated sensor for actual
+temperature/humidity display.
