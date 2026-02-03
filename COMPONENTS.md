@@ -337,6 +337,16 @@ Architecture: Battery (3.0-4.2V) -> Boost -> 5V -> LDO -> 3.3V
 
 The board provides basic overcharge protection via the charger IC. Overdischarge protection depends on variant -- some have DW01A + 8205A protection, others rely solely on the charger IC. **No output overcurrent or short-circuit protection** on the 5V/3.3V rails.
 
+### Micro USB Connector Repair
+
+The micro USB charging port was ripped off the board from repeated use. Repaired
+by soldering wires directly to the input pads where the connector used to sit.
+Only VBUS (+5V) and GND are needed since the port is just for charging.
+
+To identify the pads: use a multimeter in continuity mode — GND has continuity
+with the battery negative terminal and the large shield tabs. VBUS is the
+remaining signal pad that traces back to the charger IC (U1).
+
 ### Critical Pitfalls
 
 1. **Reverse battery polarity destroys the board.** No protection. Double-check +/- markings.
