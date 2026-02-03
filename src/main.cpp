@@ -2,10 +2,9 @@
 #include <U8g2lib.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include "secrets.h"
 
 #define LED_PIN 8
-#define WIFI_SSID "your-ssid"
-#define WIFI_PASS "your-password"
 
 U8G2_SSD1306_72X40_ER_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 6, 5);
 WebServer server(80);
