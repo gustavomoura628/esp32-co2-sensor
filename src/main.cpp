@@ -2,9 +2,14 @@
 #include <U8g2lib.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <HTTPClient.h>
 #include "secrets.h"
 
 #define LED_PIN 8
+#define BATTERY_PIN 4
+#define BATTERY_READ_INTERVAL 10000
+#define BATTERY_LOW_THRESHOLD 3.4
+#define NTFY_INTERVAL 300000  // 5 minutes
 
 U8G2_SSD1306_72X40_ER_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 6, 5);
 WebServer server(80);
@@ -13,6 +18,10 @@ bool ledOn = false;
 String oledMessage = "Hello!";
 int ipScrollOffset = 0;
 unsigned long lastScrollTime = 0;
+float batteryVoltage = 0.0;
+unsigned long lastBatteryRead = 0;
+bool ntfyFirstAlert = true;
+unsigned long lastNtfySent = 0;
 
 void updateOled() {
     u8g2.clearBuffer();
@@ -31,8 +40,10 @@ void updateOled() {
         u8g2.drawStr(x + totalWidth, 9, ip.c_str());
     }
 
-    // LED state
-    u8g2.drawStr(0, 20, ledOn ? "LED: ON" : "LED: OFF");
+    // LED state + battery voltage
+    char line2[16];
+    snprintf(line2, sizeof(line2), "%s %.2fV", ledOn ? "ON" : "OFF", batteryVoltage);
+    u8g2.drawStr(0, 20, line2);
 
     // Message (wrap if needed)
     u8g2.drawStr(0, 32, oledMessage.substring(0, 12).c_str());
@@ -73,6 +84,11 @@ const char *PAGE = R"rawliteral(
 <h1>ESP32-C3 Test</h1>
 
 <div class="card">
+  <div id="battvolt" style="font-size:1.8em;font-weight:bold;color:#888">--</div>
+  <div id="battlabel" style="font-size:0.9em;color:#aaa">Battery</div>
+</div>
+
+<div class="card">
   <div id="ledbox" class="led-box led-off"></div>
   <div id="ledlabel">OFF</div>
   <button onclick="toggleLed()">Toggle LED</button>
@@ -102,6 +118,18 @@ function toggleLed() {
   fetch('/led').then(function(r){return r.text()}).then(setLed);
 }
 fetch('/status').then(function(r){return r.text()}).then(setLed);
+function updateBatt() {
+  fetch('/battery').then(function(r){return r.text()}).then(function(v) {
+    var el = document.getElementById('battvolt');
+    var f = parseFloat(v);
+    el.innerText = f.toFixed(2) + 'V';
+    if (f >= 3.7) el.style.color = '#22c55e';
+    else if (f >= 3.4) el.style.color = '#eab308';
+    else el.style.color = '#ef4444';
+  });
+}
+updateBatt();
+setInterval(updateBatt, 10000);
 </script>
 </body>
 </html>
@@ -120,6 +148,31 @@ void handleLed() {
     digitalWrite(LED_PIN, ledOn ? LOW : HIGH); // inverted logic
     updateOled();
     server.send(200, "text/plain", ledOn ? "ON" : "OFF");
+}
+
+void handleBattery() {
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%.2f", batteryVoltage);
+    server.send(200, "text/plain", buf);
+}
+
+void readBattery() {
+    int mv = analogReadMilliVolts(BATTERY_PIN);
+    batteryVoltage = mv * 2.0 / 1000.0;
+    Serial.printf("Battery: %.2fV\n", batteryVoltage);
+}
+
+void sendNtfyAlert() {
+    HTTPClient http;
+    http.begin(NTFY_BATTERY);
+    http.addHeader("Title", "ESP32 CO2 Sensor - Battery Low");
+    http.addHeader("Tags", "warning,battery");
+    http.addHeader("Priority", "high");
+    char msg[32];
+    snprintf(msg, sizeof(msg), "Battery: %.2fV", batteryVoltage);
+    http.POST(msg);
+    http.end();
+    lastNtfySent = millis();
 }
 
 void handleMsg() {
@@ -151,7 +204,7 @@ void setup() {
     // WiFi - STA mode
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
-     WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     Serial.printf("MAC: %s\n", WiFi.macAddress().c_str());
     Serial.printf("Connecting to '%s'\n", WIFI_SSID);
@@ -180,19 +233,52 @@ void setup() {
     Serial.printf("Channel: %d\n", WiFi.channel());
     Serial.printf("BSSID: %s\n", WiFi.BSSIDstr().c_str());
 
+    // Initial battery reading
+    readBattery();
+
     // Web server routes
     server.on("/", handleRoot);
     server.on("/led", handleLed);
     server.on("/status", handleStatus);
+    server.on("/battery", handleBattery);
     server.on("/msg", handleMsg);
     server.begin();
 
     Serial.println("Web server started.");
+
+    // Boot notification
+    {
+        HTTPClient http;
+        http.begin(NTFY_BOOT);
+        http.addHeader("Title", "ESP32 CO2 Sensor booted");
+        http.addHeader("Tags", "electric_plug");
+        char msg[128];
+        snprintf(msg, sizeof(msg), "IP: %s\nRSSI: %d dBm\nMAC: %s\nSSID: %s",
+            WiFi.localIP().toString().c_str(), WiFi.RSSI(),
+            WiFi.macAddress().c_str(), WIFI_SSID);
+        http.POST(msg);
+        http.end();
+    }
+
     updateOled();
 }
 
 void loop() {
     server.handleClient();
+
+    // Read battery voltage periodically
+    if (millis() - lastBatteryRead >= BATTERY_READ_INTERVAL) {
+        lastBatteryRead = millis();
+        readBattery();
+        updateOled();
+
+        // Send ntfy alert if battery is low
+        if (batteryVoltage > 0.5 && batteryVoltage < BATTERY_LOW_THRESHOLD
+            && (ntfyFirstAlert || millis() - lastNtfySent >= NTFY_INTERVAL)) {
+            ntfyFirstAlert = false;
+            sendNtfyAlert();
+        }
+    }
 
     // Scroll IP if it doesn't fit
     String ip = WiFi.localIP().toString();

@@ -68,6 +68,7 @@ pio device monitor
 | `/` | GET | Serves the web UI |
 | `/led` | GET | Toggles LED, returns `ON` or `OFF` |
 | `/status` | GET | Returns current LED state as plain text |
+| `/battery` | GET | Returns battery voltage as plain text (e.g. `3.82`) |
 | `/msg?t=` | GET | Sets OLED message (max 24 chars), redirects to `/` |
 
 ## WiFi antenna defect
