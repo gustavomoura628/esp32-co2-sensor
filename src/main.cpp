@@ -3,25 +3,35 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
+#include <MHZ19.h>
 #include "secrets.h"
 
 #define LED_PIN 8
 #define BATTERY_PIN 4
 #define BATTERY_READ_INTERVAL 10000
+#define CO2_READ_INTERVAL 5000
+#define CO2_WARMUP_MS 180000  // 3 minutes
 #define BATTERY_LOW_THRESHOLD 3.4
 #define NTFY_INTERVAL 300000  // 5 minutes
+#define SKIP_WARMUP true      // debug: skip CO2 warmup
 
 U8G2_SSD1306_72X40_ER_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, 6, 5);
 WebServer server(80);
+MHZ19 mhz;
+
+RTC_DATA_ATTR bool sensorWasRunning = false;
 
 bool ledOn = false;
-String oledMessage = "Hello!";
 int ipScrollOffset = 0;
 unsigned long lastScrollTime = 0;
 float batteryVoltage = 0.0;
 unsigned long lastBatteryRead = 0;
 bool ntfyFirstAlert = true;
 unsigned long lastNtfySent = 0;
+int co2ppm = 0;
+int co2temp = 0;
+unsigned long lastCO2Read = 0;
+unsigned long bootTime = 0;
 
 void updateOled() {
     u8g2.clearBuffer();
@@ -40,16 +50,18 @@ void updateOled() {
         u8g2.drawStr(x + totalWidth, 9, ip.c_str());
     }
 
-    // LED state + battery voltage
+    // CO2 + battery voltage
     char line2[16];
-    snprintf(line2, sizeof(line2), "%s %.2fV", ledOn ? "ON" : "OFF", batteryVoltage);
+    if (millis() - bootTime < CO2_WARMUP_MS) {
+        unsigned long remaining = (CO2_WARMUP_MS - (millis() - bootTime)) / 1000;
+        snprintf(line2, sizeof(line2), "%lus %.2fV", remaining, batteryVoltage);
+    } else {
+        snprintf(line2, sizeof(line2), "%dppm %.1fV", co2ppm, batteryVoltage);
+    }
     u8g2.drawStr(0, 20, line2);
 
-    // Message (wrap if needed)
-    u8g2.drawStr(0, 32, oledMessage.substring(0, 12).c_str());
-    if (oledMessage.length() > 12) {
-        u8g2.drawStr(0, 40, oledMessage.substring(12, 24).c_str());
-    }
+    // LED state
+    u8g2.drawStr(0, 32, ledOn ? "LED: ON" : "LED: OFF");
 
     u8g2.sendBuffer();
 }
@@ -75,13 +87,20 @@ const char *PAGE = R"rawliteral(
   button { padding: 10px 20px; font-size: 1em; margin-top: 12px; cursor: pointer;
            background: #3b82f6; color: #fff; border: none; border-radius: 6px; }
   button:active { background: #2563eb; }
-  input[type=text] { width: 100%; padding: 8px; box-sizing: border-box; font-size: 1em;
-                     background: #1a1a1a; color: #e0e0e0; border: 1px solid #3a3a3a;
-                     border-radius: 4px; }
 </style>
 </head>
 <body>
 <h1>ESP32-C3 Test</h1>
+
+<div class="card">
+  <div id="co2val" style="font-size:2.2em;font-weight:bold;color:#888">--</div>
+  <div style="font-size:0.9em;color:#aaa">CO2 (ppm)</div>
+</div>
+
+<div class="card">
+  <div id="tempval" style="font-size:1.8em;font-weight:bold;color:#888">--</div>
+  <div style="font-size:0.9em;color:#aaa">CO2 sensor temp (unreliable)</div>
+</div>
 
 <div class="card">
   <div id="battvolt" style="font-size:1.8em;font-weight:bold;color:#888">--</div>
@@ -93,12 +112,6 @@ const char *PAGE = R"rawliteral(
   <div id="ledlabel">OFF</div>
   <button onclick="toggleLed()">Toggle LED</button>
 </div>
-
-<h2>OLED Message</h2>
-<form action="/msg" method="GET">
-  <input type="text" name="t" maxlength="24" placeholder="Type a message...">
-  <button type="submit">Send to OLED</button>
-</form>
 
 <script>
 function setLed(state) {
@@ -130,6 +143,34 @@ function updateBatt() {
 }
 updateBatt();
 setInterval(updateBatt, 10000);
+function updateCO2() {
+  fetch('/co2').then(function(r){return r.text()}).then(function(v) {
+    var el = document.getElementById('co2val');
+    var ppm = parseInt(v);
+    if (ppm < 0) {
+      el.innerText = 'WARM ' + Math.abs(ppm) + 's';
+      el.style.color = '#888';
+      return;
+    }
+    el.innerText = ppm;
+    if (ppm <= 800) el.style.color = '#22c55e';
+    else if (ppm <= 1000) el.style.color = '#eab308';
+    else el.style.color = '#ef4444';
+  });
+}
+updateCO2();
+setInterval(updateCO2, 5000);
+function updateCO2Temp() {
+  fetch('/co2temp').then(function(r){return r.text()}).then(function(v) {
+    var el = document.getElementById('tempval');
+    var t = parseInt(v);
+    if (t === -1) { el.innerText = '--'; el.style.color = '#888'; return; }
+    el.innerText = t + '\u00B0C';
+    el.style.color = '#aaa';
+  });
+}
+updateCO2Temp();
+setInterval(updateCO2Temp, 5000);
 </script>
 </body>
 </html>
@@ -175,15 +216,32 @@ void sendNtfyAlert() {
     lastNtfySent = millis();
 }
 
-void handleMsg() {
-    if (server.hasArg("t")) {
-        oledMessage = server.arg("t");
-        oledMessage.trim();
-        if (oledMessage.isEmpty()) oledMessage = " ";
+void handleCO2() {
+    char buf[8];
+    if (millis() - bootTime < CO2_WARMUP_MS) {
+        int remaining = (CO2_WARMUP_MS - (millis() - bootTime)) / 1000;
+        snprintf(buf, sizeof(buf), "-%d", remaining);
+    } else {
+        snprintf(buf, sizeof(buf), "%d", co2ppm);
     }
-    updateOled();
-    server.sendHeader("Location", "/");
-    server.send(302, "text/plain", "OK");
+    server.send(200, "text/plain", buf);
+}
+
+void handleCO2Temp() {
+    char buf[8];
+    if (millis() - bootTime < CO2_WARMUP_MS) {
+        server.send(200, "text/plain", "-1");
+    } else {
+        snprintf(buf, sizeof(buf), "%d", co2temp);
+        server.send(200, "text/plain", buf);
+    }
+}
+
+void readCO2() {
+    co2ppm = mhz.getCO2();
+    co2temp = mhz.getTemperature();
+    Serial.printf("CO2: %d ppm  Temp: %d C\n", co2ppm, co2temp);
+    sensorWasRunning = true;
 }
 
 void setup() {
@@ -192,6 +250,22 @@ void setup() {
     // LED
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, HIGH); // OFF (inverted)
+
+    // CO2 sensor (UART on GPIO20 RX, GPIO21 TX)
+    Serial1.begin(9600, SERIAL_8N1, 20, 21);
+    mhz.begin(Serial1);
+    mhz.autoCalibration(false);
+    bootTime = millis();
+    if (SKIP_WARMUP || sensorWasRunning) {
+        bootTime -= CO2_WARMUP_MS; // skip warmup
+        Serial.println("Skipping CO2 warmup.");
+    }
+
+    char fwVer[5];
+    mhz.getVersion(fwVer);
+    fwVer[4] = '\0';
+    Serial.printf("MH-Z19 firmware: %s\n", fwVer);
+    Serial.printf("MH-Z19 range: %d ppm\n", mhz.getRange());
 
     // OLED
     u8g2.begin();
@@ -241,7 +315,8 @@ void setup() {
     server.on("/led", handleLed);
     server.on("/status", handleStatus);
     server.on("/battery", handleBattery);
-    server.on("/msg", handleMsg);
+    server.on("/co2", handleCO2);
+    server.on("/co2temp", handleCO2Temp);
     server.begin();
 
     Serial.println("Web server started.");
@@ -265,6 +340,13 @@ void setup() {
 
 void loop() {
     server.handleClient();
+
+    // Read CO2 periodically
+    if (millis() - lastCO2Read >= CO2_READ_INTERVAL) {
+        lastCO2Read = millis();
+        readCO2();
+        updateOled();
+    }
 
     // Read battery voltage periodically
     if (millis() - lastBatteryRead >= BATTERY_READ_INTERVAL) {
