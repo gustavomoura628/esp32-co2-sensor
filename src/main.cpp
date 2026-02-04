@@ -7,6 +7,7 @@
 #include <Wire.h>
 #include <HTU21D.h>
 #include <FastLED.h>
+#include <sys/time.h>
 #include "secrets.h"
 
 #define LED_PIN 8
@@ -46,6 +47,24 @@ bool stripOn = false;
 String stripMode = "solid";
 uint8_t rainbowHue = 0;
 unsigned long lastHTU21DRead = 0;
+
+unsigned long long epochMs() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (unsigned long long)tv.tv_sec * 1000ULL + tv.tv_usec / 1000;
+}
+
+void dbg(const char* tag, const char* msg) {
+    Serial.printf("[%llu] %s: %s\n", epochMs(), tag, msg);
+}
+
+void dbgClient(const char* tag) {
+    if (server.hasArg("t")) {
+        unsigned long long clientT = strtoull(server.arg("t").c_str(), NULL, 10);
+        unsigned long long now = epochMs();
+        Serial.printf("[%llu] %s: client sent t=%llu, delta=%lldms, RSSI=%d\n", now, tag, clientT, (long long)(now - clientT), WiFi.RSSI());
+    }
+}
 
 enum CO2State { CO2_IDLE, CO2_WAITING };
 CO2State co2State = CO2_IDLE;
@@ -103,7 +122,7 @@ const char *PAGE = R"rawliteral(
   .relay-on { background: #e0e0e0; border: 2px solid #e0e0e0; }
   .relay-off { background: #1a1a1a; border: 2px solid #3a3a3a; }
   #ledlabel { font-size: 0.9em; color: #aaa; }
-  button { padding: 8px 16px; font-size: 0.9em; margin-top: 8px; cursor: pointer;
+  button { padding: 8px 16px; min-width: 80px; font-size: 0.9em; margin-top: 8px; cursor: pointer;
            background: #3b82f6; color: #fff; border: none; border-radius: 6px;
            box-shadow: 0 3px 0 #1e3a5f; position: relative; top: 0; transition: all 0.1s; }
   button:active { top: 2px; box-shadow: 0 1px 0 #1e3a5f; }
@@ -141,14 +160,14 @@ const char *PAGE = R"rawliteral(
   <div style="font-size:0.85em;color:#aaa;margin-bottom:6px">Board LED</div>
   <div id="ledbox" class="led-box led-off"></div>
   <div id="ledlabel">OFF</div>
-  <button id="ledbtn" onclick="toggleLed()">Toggle</button>
+  <button id="ledbtn" onclick="toggleLed()">Turn On</button>
 </div>
 
 <div class="card">
   <div style="font-size:0.85em;color:#aaa;margin-bottom:6px">Room Light</div>
   <div id="relaybox" class="led-box relay-off"></div>
   <div id="relaylabel">OFF</div>
-  <button id="relaybtn" onclick="toggleRelay()">Toggle</button>
+  <button id="relaybtn" onclick="toggleRelay()">Turn On</button>
 </div>
 
 <div class="card wide">
@@ -178,17 +197,20 @@ function setLed(state) {
     box.className = 'led-box led-on';
     label.innerText = 'ON';
     btn.className = 'btn-on';
+    btn.innerText = 'Turn Off';
   } else {
     box.className = 'led-box led-off';
     label.innerText = 'OFF';
     btn.className = '';
+    btn.innerText = 'Turn On';
   }
 }
 function toggleLed() {
   actionsPending++;
-  var label = document.getElementById('ledlabel');
-  setLed(label.innerText === 'ON' ? 'OFF' : 'ON');
-  fetch('/led').then(function(r){return r.text()}).then(function(s){setLed(s);actionsPending--}).catch(function(){actionsPending--});
+  var want = document.getElementById('ledlabel').innerText === 'ON' ? 0 : 1;
+  setLed(want ? 'ON' : 'OFF');
+  var t0 = Date.now();
+  fetch('/led?on=' + want + '&t=' + t0).then(function(r){return r.text()}).then(function(s){console.log('LED round-trip: ' + (Date.now()-t0) + 'ms');setLed(s);actionsPending--}).catch(function(){actionsPending--});
 }
 function syncAll(d) {
   setLed(d.led ? 'ON' : 'OFF');
@@ -276,16 +298,19 @@ function setRelay(state) {
   if (state === 'ON') {
     box.className = 'led-box relay-on';
     btn.className = 'btn-on';
+    btn.innerText = 'Turn Off';
   } else {
     box.className = 'led-box relay-off';
     btn.className = '';
+    btn.innerText = 'Turn On';
   }
 }
 function toggleRelay() {
   actionsPending++;
-  var label = document.getElementById('relaylabel');
-  setRelay(label.innerText === 'ON' ? 'OFF' : 'ON');
-  fetch('/relay').then(function(r){return r.text()}).then(function(s){setRelay(s);actionsPending--}).catch(function(){actionsPending--});
+  var want = document.getElementById('relaylabel').innerText === 'ON' ? 0 : 1;
+  setRelay(want ? 'ON' : 'OFF');
+  var t0 = Date.now();
+  fetch('/relay?on=' + want + '&t=' + t0).then(function(r){return r.text()}).then(function(s){console.log('RELAY round-trip: ' + (Date.now()-t0) + 'ms');setRelay(s);actionsPending--}).catch(function(){actionsPending--});
 }
 var stripIsOn = false;
 var stripMode = 'solid';
@@ -316,7 +341,7 @@ function setMode(m) {
   stripMode = m;
   stripIsOn = true;
   updateStripBtns();
-  fetch('/strip?mode=' + m + '&on=1').then(function(r){return r.json()}).then(function(d) {
+  fetch('/strip?mode=' + m + '&on=1&t=' + Date.now()).then(function(r){return r.json()}).then(function(d) {
     stripIsOn = d.on === 1;
     if (d.mode) stripMode = d.mode;
     updateStripBtns();
@@ -335,7 +360,7 @@ function setStrip() {
   var r = parseInt(c.substr(1,2),16);
   var g = parseInt(c.substr(3,2),16);
   var bl = parseInt(c.substr(5,2),16);
-  fetch('/strip?on=' + (stripIsOn?1:0) + '&brightness=' + b + '&r=' + r + '&g=' + g + '&b=' + bl).then(function(){
+  fetch('/strip?on=' + (stripIsOn?1:0) + '&brightness=' + b + '&r=' + r + '&g=' + g + '&b=' + bl + '&t=' + Date.now()).then(function(){
     actionsPending--;
     stripSending = false;
     if (stripDirty) setStrip();
@@ -355,16 +380,33 @@ void handleStatus() {
 }
 
 void handleLed() {
-    ledOn = !ledOn;
+    dbg("LED", "request received");
+    dbgClient("LED");
+    if (server.hasArg("on")) {
+        ledOn = server.arg("on") == "1";
+    } else {
+        ledOn = !ledOn;
+    }
     digitalWrite(LED_PIN, ledOn ? LOW : HIGH); // inverted logic
+    dbg("LED", ledOn ? "actuated ON" : "actuated OFF");
     updateOled();
+    dbg("LED", "oled updated");
     server.send(200, "text/plain", ledOn ? "ON" : "OFF");
+    dbg("LED", "response sent");
 }
 
 void handleRelay() {
-    relayOn = !relayOn;
+    dbg("RELAY", "request received");
+    dbgClient("RELAY");
+    if (server.hasArg("on")) {
+        relayOn = server.arg("on") == "1";
+    } else {
+        relayOn = !relayOn;
+    }
     digitalWrite(RELAY_PIN, relayOn ? HIGH : LOW);
+    dbg("RELAY", relayOn ? "actuated ON" : "actuated OFF");
     server.send(200, "text/plain", relayOn ? "ON" : "OFF");
+    dbg("RELAY", "response sent");
 }
 
 void handleRelayStatus() {
@@ -431,6 +473,7 @@ void readCO2() {
 
 void readHTU21D() {
     htuTemp = htu.readTemperature();
+    server.handleClient();
     htuHumidity = htu.readHumidity();
     Serial.printf("HTU21D: %.1f C  %.1f %%RH\n", htuTemp, htuHumidity);
 }
@@ -451,6 +494,8 @@ void updateStrip() {
 }
 
 void handleStrip() {
+    dbg("STRIP", "request received");
+    dbgClient("STRIP");
     if (server.hasArg("on")) {
         stripOn = server.arg("on") == "1";
     }
@@ -463,15 +508,19 @@ void handleStrip() {
     if (server.hasArg("r") && server.hasArg("g") && server.hasArg("b")) {
         stripColor = CRGB(server.arg("r").toInt(), server.arg("g").toInt(), server.arg("b").toInt());
     }
+    dbg("STRIP", "params parsed");
     if (server.args() > 0) updateStrip();
+    dbg("STRIP", "strip updated");
 
     char buf[96];
     snprintf(buf, sizeof(buf), "{\"on\":%d,\"brightness\":%d,\"mode\":\"%s\",\"r\":%d,\"g\":%d,\"b\":%d}",
         stripOn ? 1 : 0, stripBrightness, stripMode.c_str(), stripColor.r, stripColor.g, stripColor.b);
     server.send(200, "application/json", buf);
+    dbg("STRIP", "response sent");
 }
 
 void handlePoll() {
+    dbg("POLL", "request received");
     char buf[128];
     snprintf(buf, sizeof(buf),
         "{\"led\":%d,\"relay\":%d,\"on\":%d,\"brightness\":%d,\"mode\":\"%s\",\"r\":%d,\"g\":%d,\"b\":%d}",
@@ -479,6 +528,7 @@ void handlePoll() {
         stripBrightness, stripMode.c_str(),
         stripColor.r, stripColor.g, stripColor.b);
     server.send(200, "application/json", buf);
+    dbg("POLL", "response sent");
 }
 
 void handleTemp() {
@@ -544,7 +594,7 @@ void setup() {
     // WiFi - STA mode
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
-    WiFi.setTxPower(WIFI_POWER_8_5dBm);
+    WiFi.setTxPower(WIFI_POWER_11dBm);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     Serial.printf("MAC: %s\n", WiFi.macAddress().c_str());
     Serial.printf("Connecting to '%s'\n", WIFI_SSID);
@@ -563,6 +613,20 @@ void setup() {
         u8g2.drawStr(0, 22, "Check serial");
         u8g2.sendBuffer();
         while (true) delay(1000);
+    }
+
+    // NTP time sync for debug timestamps
+    configTime(0, 0, "pool.ntp.org");
+    Serial.print("NTP sync...");
+    int ntpWait = 0;
+    while (time(nullptr) < 1000000000 && ntpWait < 10) {
+        delay(500);
+        ntpWait++;
+    }
+    if (time(nullptr) >= 1000000000) {
+        Serial.printf(" OK (epoch: %llu)\n", epochMs());
+    } else {
+        Serial.println(" FAILED (timestamps will be millis-based)");
     }
 
     Serial.printf("Connected! IP: %s  RSSI: %d\n",
@@ -612,6 +676,8 @@ void setup() {
 }
 
 void loop() {
+    unsigned long loopStart = millis();
+    static unsigned long lastLoopWarn = 0;
     server.handleClient();
 
     // Update LED strip (needed for animations like rainbow)
@@ -679,6 +745,7 @@ void loop() {
         lastBatteryRead = millis();
         readBattery();
         updateOled();
+        server.handleClient();
 
         // Send ntfy alert if battery is low
         if (batteryVoltage > 1.0 && batteryVoltage < BATTERY_LOW_THRESHOLD
@@ -700,5 +767,11 @@ void loop() {
             ipScrollOffset = 0;
         }
         updateOled();
+    }
+
+    unsigned long loopTime = millis() - loopStart;
+    if (loopTime > 50 && millis() - lastLoopWarn > 1000) {
+        lastLoopWarn = millis();
+        Serial.printf("[%llu] LOOP: slow iteration %lums\n", epochMs(), loopTime);
     }
 }

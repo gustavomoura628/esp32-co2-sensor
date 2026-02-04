@@ -19,3 +19,10 @@ successful flash, 5 seconds of ESP32 serial output is captured and printed.
 
 - After any edit to files that affect the firmware (source, headers, config)
 - Run `./flash.sh` and check the output for errors
+
+## UI delay debugging
+
+We are actively debugging a recurring delay issue with the web UI.
+Progress is tracked in `OUR_STEPS_FIXING_DELAY.md`. When working on this
+issue, update that doc with mid-level detail about what was tried, what
+was found, and what was ruled out at each step of debugging.
