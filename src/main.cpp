@@ -357,6 +357,9 @@ void readCO2() {
         Serial.printf("CO2: %d ppm  Temp: %d C\n", co2ppm, co2temp);
     } else {
         Serial.printf("CO2: read error (%d), ppm=%d\n", co2error, co2ppm);
+        // Hard recovery: flush UART and wait for sensor to finish any in-flight response
+        delay(1500);
+        while (Serial1.available()) Serial1.read();
     }
 }
 
