@@ -196,7 +196,7 @@ function updateBatt() {
   fetch('/battery').then(function(r){return r.text()}).then(function(v) {
     var el = document.getElementById('battvolt');
     var f = parseFloat(v);
-    if (f < 0.5) {
+    if (f < 1.0) {
       el.innerText = '--';
       el.style.color = '#555';
       document.getElementById('battlabel').innerText = 'Battery disconnected';
@@ -660,7 +660,7 @@ void loop() {
         updateOled();
 
         // Send ntfy alert if battery is low
-        if (batteryVoltage > 0.5 && batteryVoltage < BATTERY_LOW_THRESHOLD
+        if (batteryVoltage > 1.0 && batteryVoltage < BATTERY_LOW_THRESHOLD
             && (ntfyFirstAlert || millis() - lastNtfySent >= NTFY_INTERVAL)) {
             ntfyFirstAlert = false;
             sendNtfyAlert();
