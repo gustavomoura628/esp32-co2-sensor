@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
+#define HTTP_MAX_DATA_WAIT  500   // ms to wait for client request (default 5000)
+#define HTTP_MAX_CLOSE_WAIT 500   // ms to wait for client close (default 2000)
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <MHZ19.h>
@@ -594,7 +596,7 @@ void setup() {
     // WiFi - STA mode
     WiFi.mode(WIFI_STA);
     WiFi.setSleep(false);
-    WiFi.setTxPower(WIFI_POWER_11dBm);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     Serial.printf("MAC: %s\n", WiFi.macAddress().c_str());
     Serial.printf("Connecting to '%s'\n", WIFI_SSID);
